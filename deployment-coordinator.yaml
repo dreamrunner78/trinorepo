@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tcb-trino-coordinator
+  labels:
+    app: trino
+    chart: trino-0.2.0
+    release: tcb
+    heritage: Helm
+    component: coordinator
+spec:
+  selector:
+    matchLabels:
+      app: trino
+      release: tcb
+      component: coordinator
+  serviceName: "trino-headless"
+  replicas: 1 # by default is 1
+  template:
+    metadata:
+      labels:
+        app: trino
+        release: tcb
+        component: coordinator
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+        #runAsGroup: 1000
+      terminationGracePeriodSeconds: 10
+
+      volumes:
+        - name: config-volume
+          configMap:
+            name: tcb-trino-coordinator
+        - name: catalog-volume
+          configMap:
+            name: tcb-trino-catalog
+        - name: certs
+          secret:
+            secretName: trino-tls-secret
+        - name: shared-certs
+          emptyDir: {}
+
+
+      initContainers:
+        - name: init-certs
+          image: "adoptopenjdk/openjdk11"
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+            - name: shared-certs
+              mountPath: /etc/trino/certs
+
+          command:
+          - /bin/bash
+          - -ec
+          - |-
+            openssl pkcs12 -export -in "/certs/tls.crt" \
+                -passout pass:"bassim" \
+                -inkey "/certs/tls.key" \
+                -out "/etc/trino/certs/keystore.p12"
+            keytool -importkeystore -srckeystore "/etc/trino/certs/keystore.p12" \
+                -srcstoretype PKCS12 \
+                -srcstorepass "bassim" \
+                -deststorepass "bassim" \
+                -destkeystore "/etc/trino/certs/trino-keystore.jks"
+            rm "/etc/trino/certs/keystore.p12"
+            keytool -import -file "/certs/ca.crt" \
+                    -keystore "/etc/trino/certs/trino-truststore.jks" \
+                    -storepass "bassim" \
+                    -noprompt
+
+      containers:
+      - name: trino-coordinator
+        image: "trinodb/trino:latest"
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8443
+          protocol: TCP
+        volumeMounts:
+          - mountPath: /etc/trino
+            name: config-volume
+          - mountPath: /etc/trino/catalog
+            name: catalog-volume
+          - name: certs
+            mountPath: /certs
+          - name: shared-certs
+            mountPath: /etc/trino/certs
+            readOnly: true
