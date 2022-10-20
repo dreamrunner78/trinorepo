@@ -57,9 +57,26 @@ spec:
           - /bin/bash
           - -ec
           - |-
-            openssl pkcs12 -export -in "/certs/tls.crt" \
+            cp /certs/tls.crt /tmp/
+            cp /certs/tls.key /tmp/            
+            openssl req -newkey rsa:2048 -nodes -keyout /etc/trino/certs/server.key \
+                -subj "/C=FR/ST=IDF/L=PARIS/O=ABE/OU=ABE, INC./CN=tcb-trino-coordinator-0.trino-headless.trino.svc.cluster.local" -out /etc/trino/certs/server.csr
+            cat << EOF > /etc/trino/certs/localhost.ext
+            authorityKeyIdentifier=keyid,issuer
+            basicConstraints=CA:FALSE
+            subjectAltName = @alt_names
+            [alt_names]
+            DNS.1 = hello-bassim.test
+            DNS.2 = localhost
+            DNS.3 = tcb-trino
+            DNS.4 = tcb-trino-coordinator-0
+            EOF
+            echo '-------------------------'
+            openssl x509 -req \
+                -days 365 -in /etc/trino/certs/server.csr -CA /tmp/tls.crt -CAkey /tmp/tls.key -CAcreateserial -out /etc/trino/certs/server.crt
+            openssl pkcs12 -export -in "/etc/trino/certs/server.crt" \
                 -passout pass:"bassim" \
-                -inkey "/certs/tls.key" \
+                -inkey "/etc/trino/certs/server.key" \
                 -out "/etc/trino/certs/keystore.p12"
             keytool -importkeystore -srckeystore "/etc/trino/certs/keystore.p12" \
                 -srcstoretype PKCS12 \
@@ -71,7 +88,8 @@ spec:
                     -keystore "/etc/trino/certs/trino-truststore.jks" \
                     -storepass "bassim" \
                     -noprompt
-
+            rm -f /tmp/tls.crt
+            rm -f /tmp/tls.key
       containers:
       - name: trino-coordinator
         image: "trinodb/trino:latest"
